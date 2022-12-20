@@ -1,0 +1,6 @@
+echo = 1
+log_interval = 500
+sync_interval = 10000
+cal_factor = 44.74
+zero_offset = 4229.00
+trip_value = 1700

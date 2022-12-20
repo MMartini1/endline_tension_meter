@@ -1,0 +1,144 @@
+---
+title: "Submersible Load Cell Data Logger Manual"
+author: "Bill DeVoe"
+date: "11/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The submersible load cell data logger excepts load input from a standard four-wire load cell and writes the load value to a CSV file at a predetermined interval.
+
+# Setup
+
+## Load Cell Connection
+
+The load cell should be connected to the green jumper block on the SparkFun Load Cell Amplifier. The jumper block is labeled with standard load cell wire colors; however, the submersible load cell uses non-standard colors. The appropriate connections for the submersible load cell cable are as follows:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+lc_conn <- data.frame(load_cell_cable = c('Black', 'White', 'Red', 'Green'),
+           logger_terminal = c('Red', 'Black', 'Green', 'White'),
+           cable_pin = c(1, 2, 3, 4),
+           Function = c('Voltage +', 'Voltage -', 'Signal +', 'Signal -'))
+names(lc_conn) <- stringr::str_to_title(gsub('_', ' ', names(lc_conn)))
+
+knitr::kable(lc_conn, align = 'c')
+
+```
+
+
+## Power
+
+The logger can be powered by a lithium-ion battery plugged into the battery connection on the top circuit board of the logger (the Feather M0 board). The battery can be recharged by connecting a mini-USB cable to the USB connector on the end of the board. Additionally, the logger can be powered by any USB power source connected to this jack, such as a USB power bank. When charging, a red LED on the Feather next to the USB jack will light. It will turn off when the battery is fully charged.
+
+The switch on the outside of the enclosure can be used to turn the logger on and off. It is necessary for the switch to be turned on when charging, such that the battery is connected the board. 
+
+## Memory card
+
+A SD card formatted to FAT32 should be inserted into the memory card slot on the middle circuit board of the logger. Formatting the card with the [official SD association formatter](https://www.sdcard.org/downloads/formatter/) is recommended.
+
+## Stored Settings
+
+Logger settings, including load cell calibration, are stored in a text file `config.txt` on the root level of the SD card. This allows settings to be easily transferred between loggers. If this file is absent, the logger will write this file with the default settings, as specified in the header of the logger source code. The `config.txt` file contains the following settings, one per line:
+
+* `echo = 1` - 1 or 0, whether load cell readings should be echoed over the data logger serial port.
+* `log_interval = 250` - The interval in milliseconds between each load cell reading saved to the SD card.
+* `sync_interval = 10000` - The interval in milliseconds between data writes to the SD card. Longer intervals save on power consumption, but if power is cut to the logger all data since the last write will be lost. This value must be larger than the `log_interval`.
+* `cal_factor = 1` - The calibration factor for the load cell. This can be set using a known weight using the built-in calibration procedure.
+* `zero_factor = 0` - The zero factor for the load cell. This can also be set using the built-in calibration procedure.
+* `trip_value = 1700` - This value, in calibrated load units, controls the behavior of the RGB LED on the logger board. The RGB LED will indicate when the load cell has reached 50%, 75% and 100% of this value since power up.
+
+## Logger Enclosure
+
+The electronics for the enclosure are enclosed in a Blue Robotics Water Tight Enclosure. This enclosure is submersible up to 100m depth. Blue Robotics has a great guide [here](https://bluerobotics.com/learn/watertight-enclosure-wte-assembly-new/) on assembling and opening these enclosures. Other notes:
+
+* There is silicone grease in the lobster lab for lubricating the gaskets.
+* It is recommended to remove only the endcap with the switch and cable penetrators, and leave the solid endcap in place.
+* Use of desiccant packs as a fail-safe is helpful.
+* The enclosure can be pressure-tested by connecting the included vacuum pump to the switch penetrator (remove the knob), negatively pressuring the enclosure, and monitoring the pressure. Blue Robotics has a guide on this [here](https://bluerobotics.com/learn/using-the-vacuum-test-plug/). While the pump will not apply enough negative pressure to simulate the maximum depth of 100m, it is helpful for checking for leaks.
+
+# RGB LED
+
+A single RGB LED is mounted on the logger base circuit board and is used to convey logger status when the logger is not connected via USB. The RGB LED uses the following color codes:
+
+* `Green` - The logger has successfully powered up, communicated with the load cell, and is writing to the CSV log file.
+* `Blue` - The logger battery voltage is less than 3.5 volts, indicating ~20% of the battery life remains. Battery voltage is checked each time the SD card is synced (the `sync_interval` setting.)
+* `Magenta` - A critical error has occurred and the logger is unable to record data. For more details, connect to the logger over USB to see debugging output.
+* `Pale Yellow` - The maximum load on the load cell since power up has been between 50% and 75% of the `trip_value`.
+* `Orange` - The maximum load on the load cell since power up has been between 75% and 100% of the `trip_value`.
+* `Red` - The maximum load on the load cell since power up has exceeded the `trip_value`.
+
+# CSV Format
+
+A new CSV file is created each time the logger powers on. CSV filenames are eight characters in length and contain the date followed by a sequential identifier 01-99. The format is therefore `{two-digit year}{zero-padded month}{zero-padded day}{01-99}.csv`. If the logger is powered on more than 99 times in a day, this will likely produce an error. This is a result of SD library used in the logger firmware, which uses DOS 8.3 filenames (eight characters in length maximum). 
+
+The produced CSVs contain the following fields:
+
+* `millis` - The number of milliseconds since the logger powered on.
+* `time` - The load cell reading timestamp in ISO format, yyyy-MM-ddThh:mm:ss.sZ, where the Z indicates the timezone as UTC.
+* `raw_load` - The raw load output by the SparkFun Load Cell Amplifier. This is NOT the load cell output in mV/V, but rather a unitless value specific to the chipset used.
+* `load` - The calibrated load value - this is a result of solving the line equation using raw load and stored settings, `load = cal_factor * raw_load + zero_offset`.
+
+
+# Serial Interface
+
+Commands can be sent to the logger over the USB interface, using a serial terminal program like PuTTY or the Arduino Serial Monitor. This can be used to debug the logger and change settings (which can also be changed by editing the CONFIG.TXT file.)
+
+To connect to the logger, use a serial baud rate of 9600.
+
+The following serial output indicates successful load cell power up:
+
+```{}
+----------------------------------------
+      Lobster Endline Tension Meter
+
+Created by Bill DeVoe, MaineDMR
+For questions, email william.devoe@maine.gov
+----------------------------------------
+Init SD card
+SD card OK
+
+RTC OK
+
+LC OK
+
+LC 0 offset: 1000
+LC cali factor: 0.00
+
+Logging to: 20102202.CSV at 1000ms interval.
+
+Type the following menu commands at any time:
+ l - Change logging interval
+ s - Change card sync interval
+ e - Toggle echo to serial
+ z - Get current real-time clock time
+ d - Set real-time clock time
+ c - Calibrate load cell with known weight
+ m - Manually calibrate load cell with known values
+ v - Retrieve load cell calibration values 
+ t - Tare the load cell
+ f - Enter the file manager.
+Type menu CMD any time.
+
+RGB set to:
+0
+255
+0
+```
+
+Once the logger is recording, if `echo to serial` is enabled, each load cell reading will be output to the terminal. This out is identical to the data written to the CSV file:
+
+```{}
+46292,2020-10-22T12:42:22Z,2101,0.01
+47292,2020-10-22T12:42:23Z,2194,0.1
+48292,2020-10-22T12:42:24Z,2565,0.5
+```
+
+If the last value (the calibrated load) is `inf` or `NaN`, this indicates the cell has not been calibrated.
+
+Menu options are available for multiple functions. In general, guidance on how to use these functions will be printed to the console as they are accessed.
+
