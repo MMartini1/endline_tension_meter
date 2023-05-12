@@ -23,6 +23,10 @@ Version History:
                   thus, pull down turns on the LED, so LED set values are inverted
 4.1: 2/6/2023 - Updated, M. Martini to include real language for colors, and to make 
                   colors easier to change, as well as show version number in header.
+4.2: 3/8/2023 - Updated, M. Martini, to return the weight entered, as the value might
+                not always be correctly received depending on what serial terminal
+                is used.  Increase the number of values averaged for a calibration reading.
+4.3: 3/30/2023 - Updated M. Martini provide means to get gain information to user in a meaningful way
 
 Description:
 Logs values from a SparkFun Qwiic Scale NAU7802 to a SD card and specified intervals. 
@@ -41,7 +45,7 @@ Arduino boards with similar SD/RTC as Adalogger.
 // * MACROS
 // ***********************************************************************
 #define VERSION_MAJOR 4
-#define VERSION_MINOR 1
+#define VERSION_MINOR 2
 
 // Wait for serial input in setup()?? 0 or 1
 #define WAIT_TO_START    0
@@ -70,7 +74,8 @@ Arduino boards with similar SD/RTC as Adalogger.
 #define SERIAL_SIZE 15
 
 // Number of weights to average when calibrating
-#define AVG_SIZE 4
+// was 4
+#define AVG_SIZE 20
 
 // The digital pin to light when an error occurs. Pin 17 is built-in RX LED, usually used when receiving serial data.
 // The built in LED on pin 13 cannot be used since pin 13 is being used for the clock signal for the SD card.
@@ -85,6 +90,8 @@ Arduino boards with similar SD/RTC as Adalogger.
 // such that the LiPo voltage can be measured. But GPIO #9 has already been set to be GREEN on the RGB LED. (#10, the only
 // remaining PWM pin, cannot be used as it is the Card Select pin for the Adalogger). Thus it becomes necessary to save the RGB
 // state prior to reading the analog voltage on this pin, and then toggle the pin state back to output after checking the voltage.
+// TODO - the previous version set things this way and in the battery drain test, battery was declared low (blue LED) 
+//        half way into its useful life.
 #define VBATPIN A7
 
 // Low battery voltage
@@ -113,6 +120,11 @@ int orange[] = {0,108,255};
 // all off 255,255,255
 int all_off[] = {255,255,255};
 
+// the gain values for the gain settings NAU7802_GAIN_xxx
+// note that 0b000=0 maps to a gain of 1 and 0b111=7 maps to a gain of 128 
+// defined here so they can be displayed in a meaningful way later
+int gain_value_table[] = {1,2,4,8,16,32,64,128};
+
 bool settingsDetected = false; // Used to prompt user to calibrate their scale
 bool fm; // File manager is active/inactive
 char input;
@@ -139,6 +151,7 @@ bool echo;
 int log_interval;
 int sync_interval;
 int trip_value;
+int gain_setting = 0;
 
 // Time the last log was saved
 uint32_t log_time = 0;
@@ -146,8 +159,6 @@ uint32_t log_time = 0;
 uint32_t sync_time = 0; 
 
 // Array of RGB state. Pin 9 is shared with the voltage divider so have to restore led state after battery check
-// int rgb_state[] = {0, 0, 0};
-//int rgb_state[] = {255, 255, 255};  // common anode LED
 int rgb_state[] = {255, 255, 255};  // common anode LED
 
 // Create instance of the Real Time Clock class
@@ -165,20 +176,8 @@ DateTime now;
 char filename[12];
 File logfile;
 
-// Error handler, called anytime an error/panic is hit. Stops everything. 
-void error(const __FlashStringHelper*err) {
-  Serial.print(err);
-  Serial.println(" error");
-  // Write RX led low to turn on
-  digitalWrite(ERROR_LED, LOW);
-  // Set RGB to magenta
-  // setRGB(255, 0, 255);  
-  // setRGB(0, 255, 0);  // common anode LED
-  setRGB(magenta, 3);
-  // Halts program execution
-  Serial.println(F("Program suspended"));
-  while(1);
-} // End error
+// Battery tracking variables
+float measuredvbat;
 
 // ***********************************************************************
 // * SETUP
@@ -254,9 +253,11 @@ void setup(void) {
   // Turn down load cell gain since we are using a large capacity cell
   // Gains of 1, 2, 4, 8, 16, 32, 64, and 128 are available. This can be adjusted
   // depending on the capacity of the cell.
-  // load_cell.setGain(NAU7802_GAIN_16);
-  // for bench testing with nearly no load, try vvery high gain
-  load_cell.setGain(NAU7802_GAIN_128);
+  // Bill DeVoe's original gain setting was 16
+  // for bench testing with nearly no load (say, 3kg=6.61 lb), try very high gain
+  //gain_setting = NAU7802_GAIN_128;  
+  gain_setting = NAU7802_GAIN_16;  // for real world
+  load_cell.setGain(gain_setting);
   // Re-cal analog front end when we change gain, sample rate, or channel 
   load_cell.calibrateAFE();
 
@@ -309,8 +310,6 @@ void setup(void) {
   }
 
   // Set RGB to green for setup OK
-  // setRGB(0, 255, 0);
-  // setRGB(255,0,255); // common anode LED
   setRGB(green, 3);
 
   // If you want to set the aref to something other than 5v
@@ -382,7 +381,8 @@ void loop(void) {
         break;
       // Invalid character entered
       default:
-        Serial.println(F("Invalid command"));
+        Serial.println(F("Invalid command "));
+        Serial.println(input);
     } // End switch
   } // End if serial available
   // Clear anything in RX buffer
@@ -431,17 +431,11 @@ void loop(void) {
     max_load = load;
     // Set RGB LED 
     if (max_load/trip_value > 1.0) {
-      // setRGB(255, 0, 0); // Red, trip value has been reached.
-      // setRGB(0,255,255); // common anode LED
-      setRGB(red, 3);
+      setRGB(red, 3); // Red, trip value has been reached.
     } else if (max_load/trip_value > 0.75) {
-      // setRGB(255, 165, 0); // Orange, 75% of trip value has been reached. 
-      // setRGB(0,108,255); // common anode LED
-      setRGB(orange, 3);
+      setRGB(orange, 3);  // Orange, 75% of trip value has been reached. 
     } else if (max_load/trip_value > 0.5) {
-      // setRGB(255, 255, 10); // Yellow, 50% of trip value has been reached. 
-      // setRGB(10,10,255); // common anode LED
-      setRGB(yellow, 3);
+      setRGB(yellow, 3); // Yellow, 50% of trip value has been reached.
     }
   }
   
@@ -458,21 +452,21 @@ void loop(void) {
   logfile.flush();
 
   // Check the battery level after syncing
-  float measuredvbat = analogRead(VBATPIN);
+  measuredvbat = analogRead(VBATPIN);
+  Serial.print(F("RGB pin value: ")); Serial.print(measuredvbat);
   measuredvbat *= 2;    // we divided by 2, so multiply back
   measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
   measuredvbat /= 1024; // convert to voltage
-  Serial.print("VBat: " ); Serial.println(measuredvbat);
+  Serial.print(F("= VBat: ")); Serial.println(measuredvbat);
   // If battery voltage is below defined low battery value, set RGB light as blue
+  // this overrides other states
   if (measuredvbat < LOW_BATTERY_VOLTAGE) {
-    // setRGB(0, 0, 255);  // Blue
-    // setRGB(255,255,0); // common anode LED
     setRGB(blue, 3);
   } else {
-    // Restore RGB state to before battery check
-    // setRGB(rgb_state[0], rgb_state[1], rgb_state[2]);
     setRGB(rgb_state, 3);
   }
+  Serial.print(F("RGB is: "));
+  Serial.println(rgb_color_string(rgb_state, 3));
   
 } // End loop
 
@@ -493,7 +487,7 @@ void setRGB(int rgb_values[], int sizeOfArray) {
   analogWrite(STATUS_BLUE, blue_light_value);
   // Save RGB state
   rgb_state[0] = red_light_value; rgb_state[1] = green_light_value; rgb_state[2] = blue_light_value;
-  Serial.print(F("RGB set to: "));
+  Serial.print(F("RGB changed to: "));
   Serial.print(rgb_color_string(rgb_state, 3));
   Serial.print(" ");
   Serial.print(red_light_value);
@@ -530,34 +524,43 @@ const char* rgb_color_string(int rgb_values[], int sizeOfArray) {
 void calibrateScale(void) {
   Serial.println();
   Serial.println();
-  Serial.println(F("LC cali"));
-
-  Serial.println(F("Setup load cell with no weight on it. Press a key when ready."));
-  clearSerialWait();
-  load_cell.calculateZeroOffset(64); // Zero or Tare the load cell. Average over 64 readings.
-  Serial.print(F("New zero offset: "));
-  Serial.println(load_cell.getZeroOffset());
-  // Commit zero offset to global variable
-  zero_offset = load_cell.getZeroOffset();
-  Serial.println(F("Place known weight on LC. Press a key."));
-  clearSerialWait();
-  Serial.print(F("Enter weight on the LC: "));
-  clearSerialWait();
-  // Read user input
-  float weightOnScale = Serial.parseFloat();
-  Serial.println();
-  // Tell the library how much weight is currently on it
-  load_cell.calculateCalibrationFactor(weightOnScale, 64); 
-  Serial.println();
-  Serial.print(F("New cal factor: "));
-  Serial.println(load_cell.getCalibrationFactor(), 2);
-  // Commit cal factor to global variable
-  cal_factor = load_cell.getCalibrationFactor();
-  //Serial.print(F("New Scale Reading: "));
-  //Serial.println(load_cell.getWeight(), 2);
-  Serial.println();
-  // Commit global values to SD config.txt
-  saveSystemSettings();
+  Serial.println(F("LC calibration"));
+  Serial.print(F("Are you sure you want to calibrate? Enter y to continue, any other key to abort: "));
+  readSerial();
+  if ((serial_data[0] == 'y') || (serial_data[0] == 'Y')) { 
+    Serial.println(F("Setup load cell with no weight on it. Press a key when ready."));
+    clearSerialWait();
+    load_cell.calculateZeroOffset(64); // Zero or Tare the load cell. Average over 64 readings.
+    Serial.print(F("New zero offset: "));
+    Serial.println(load_cell.getZeroOffset());
+    // Commit zero offset to global variable
+    zero_offset = load_cell.getZeroOffset();
+    Serial.println(F("Place known weight on LC. Press a key."));
+    clearSerialWait();
+    Serial.print(F("Enter weight on the LC: "));
+    clearSerialWait();
+    // Read user input
+    float weightOnScale = Serial.parseFloat();
+    // confirm user input
+    Serial.println();
+    Serial.print(F("Calibration weight entered: "));
+    Serial.println(weightOnScale);
+    // Tell the library how much weight is currently on it
+    load_cell.calculateCalibrationFactor(weightOnScale, 64); 
+    Serial.println();
+    Serial.print(F("New cal factor: "));
+    Serial.println(load_cell.getCalibrationFactor(), 2);
+    // Commit cal factor to global variable
+    cal_factor = load_cell.getCalibrationFactor();
+    //Serial.print(F("New Scale Reading: "));
+    //Serial.println(load_cell.getWeight(), 2);
+    Serial.println();
+    // Commit global values to SD config.txt
+    saveSystemSettings();
+  } else {
+    Serial.println(F("Calibration aborted"));
+  }
+  getCalibration();
 } // End calibrateScale
 
 // Reads the current system settings from the SD card
@@ -669,6 +672,10 @@ void getCalibration() {
   Serial.println(load_cell.getZeroOffset());
   Serial.print(F("LC cali factor: "));
   Serial.println(load_cell.getCalibrationFactor());
+  Serial.print(F("LC gain: "));
+  Serial.println(gain_value_table[gain_setting]);
+  Serial.print(F("LC trip value: "));
+  Serial.println(DEFAULT_TRIP_VALUE);
   Serial.println();
 }
 
@@ -678,20 +685,27 @@ void manualCalibration() {
   float settingCalibrationFactor; // Value used to convert the load cell reading to lbs or kg
   long settingZeroOffset; // Zero value that is found when scale is tared
   Serial.println();
-  Serial.println(F("Enter the 0 offset: "));
-  clearSerialWait();
-  zero_offset = Serial.parseFloat();
-  Serial.println();
-  Serial.println(F("Enter the cali factor: "));
-  clearSerialWait();
-  cal_factor = Serial.parseFloat();
-  // Save to config.txt
-  saveSystemSettings();
-  // Pass these values to the library
-  load_cell.setZeroOffset(zero_offset);
-  load_cell.setCalibrationFactor(cal_factor);
-  Serial.println(F("LC calibrated"));
-  Serial.println();
+  Serial.print(F("Are you sure you want to change the calibration? Enter y to continue, any other key to abort: "));
+  readSerial();
+  if ((serial_data[0] == 'y') || (serial_data[0] == 'Y')) { 
+    Serial.println(F("Enter the 0 offset: "));
+    clearSerialWait();
+    zero_offset = Serial.parseFloat();
+    Serial.println();
+    Serial.println(F("Enter the cali factor: "));
+    clearSerialWait();
+    cal_factor = Serial.parseFloat();
+    // Save to config.txt
+    saveSystemSettings();
+    // Pass these values to the library
+    load_cell.setZeroOffset(zero_offset);
+    load_cell.setCalibrationFactor(cal_factor);
+    Serial.println(F("LC calibrated"));
+    Serial.println();
+  } else {
+    Serial.println(F("Manual calibration update aborted"));
+  }
+  getCalibration();
 }
 
 // Get the current time from the real time clock as an ISO UTC char array
@@ -819,8 +833,8 @@ void fileManager() {
   fm = true;
   do {
     Serial.println();
-    Serial.println(F("Choose an option:\n l - list files\n t - transfer a file\n d - delete a file\n c - clear the entire SD card\n x - exit file manager."));
-    Serial.println(F("Choose FM option:"));
+    Serial.println(F("Choose: l - list files; t - transfer a file; d - delete a file; c - clear the entire SD card; x - exit file manager."));
+    Serial.println(F("Enter file option:"));
     // Get incoming data
     readSerial();
     // Switch on incoming byte
@@ -990,3 +1004,18 @@ void clearCard() {
   // Restart logger
   //resetFunc();
 } // End clearCard
+
+// Error handler, called anytime an error/panic is hit. Stops everything. 
+void error(const __FlashStringHelper*err) {
+  Serial.print(err);
+  Serial.println(" error");
+  // Write RX led low to turn on
+  digitalWrite(ERROR_LED, LOW);
+  // Set RGB to magenta
+  // setRGB(255, 0, 255);  
+  // setRGB(0, 255, 0);  // common anode LED magenta
+  setRGB(magenta, 3);
+  // Halts program execution
+  Serial.println(F("Program suspended"));
+  while(1);
+} // End error
