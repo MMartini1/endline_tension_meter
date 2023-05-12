@@ -3,12 +3,12 @@
 
 Original design by William DeVoe, Marine Resource Scientist at Maine Department of Marine Resources 
 
-This version is built for the NOAA Northeast Fisheries Science Center and is a work in progress.  THe main differences are:
+This version is built for the NOAA Northeast Fisheries Science Center and is a work in progress.  The main differences are:
 - 3D printed framework to secure the electronics
 - detachable wires from the end cap switch
 - Qwiic shield to connect from the feather to the sensor board
 - different load cell wiring
-- larger battery and housing
+- larger battery and housing for 6 day endurance 
 - add pressure relief valve
 - refinements to the code
 
